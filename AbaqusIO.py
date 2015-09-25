@@ -1,5 +1,6 @@
 import scipy as sp
 import numpy as np
+import re
 import pickle
 from matplotlib.cbook import flatten
 
@@ -585,3 +586,144 @@ def generateAbaqusInp(inputFileName, ms, elastic_modulus=(120, 80),
         f.writelines(('**', nl))
         f.writelines(('*End Step', nl))
     f.close()
+
+
+def ABstrains(ABout):
+    f = open(ABout, 'r')
+    cur_line = f.readline()
+    while(cur_line != "" and "NUMBER OF ELEMENTS IS" not in cur_line):
+        cur_line = f.readline()
+    # get number of elements to loop through
+    num_elements = int((cur_line.split())[4])
+
+    currentStep = 1
+    keepProcessing = True
+    strains = None
+    # determine if this is a static or visco analysis
+    visco = False
+    searchStaticOrVisco = "S T E P       {}     (S T A T I C   A N A L Y S I S|V I S C O   A N A L Y S I S)".format(currentStep)
+    m = re.search(searchStaticOrVisco, cur_line)
+    while(cur_line != "" and not m):
+        cur_line = f.readline()
+        m = re.search(searchStaticOrVisco, cur_line)
+
+    if (cur_line == ""):
+        return None
+
+    if m.group(1) == "V I S C O   A N A L Y S I S":
+        visco = True
+
+    while (keepProcessing):
+        # Read strains for the next step, for static analysis, there
+        # should be only one
+        stepStrains = _ReadStrainsStep(currentStep, f, num_elements, visco)
+        if stepStrains is None:
+            keepProcessing = False
+        else:
+            if strains is None:
+                strains = stepStrains
+            else:
+                strains = np.concatenate((strains, stepStrains), axis=3)
+        currentStep = currentStep + 1
+    return strains
+
+
+def _ReadStrainsStep(currentStep, f, num_elements, visco=False):
+
+    cur_line = f.readline()
+
+    # get time increments and time period for step if visco
+    timeIncrement = 0
+    timePeriod = 0
+    numberOfTimeSteps = 1
+    if visco:
+        while(cur_line != "" and "TIME INCREMENT IS" not in cur_line):
+            cur_line = f.readline()
+        if cur_line == "":
+            return None
+        timeIncrement = float((cur_line.split())[3])
+        while(cur_line != "" and "TIME PERIOD IS" not in cur_line):
+            cur_line = f.readline()
+        timePeriod = float((cur_line.split())[3])
+        numberOfTimeSteps = timePeriod/timeIncrement
+
+    currentTimeStep = 0
+
+    # create storage of element values, only strain in 11 direction currently
+    # numStrains are the numeric values for 11, 22, 33, 12, 13, 23 strains
+    #                         respectively  0,  1, 2 , 3,  4,  5
+    num_strains = range(0, 1)
+    dim_length = np.ceil(num_elements ** (1/3.0))
+    if visco:
+        strains = np.zeros((dim_length, dim_length, dim_length,
+                            numberOfTimeSteps, len(num_strains)))
+    else:
+        strains = np.zeros((dim_length, dim_length, dim_length,
+                            np.size(num_strains)))
+
+    # read strains for the next timestep, if static only one timestep to read
+    if (visco):
+        continueReading = True
+        while (continueReading):
+            continueReading = _ReadStrainsTimestep(currentStep,
+                                                   currentTimeStep, f,
+                                                   num_elements, strains, True)
+            currentTimeStep = currentTimeStep + 1
+    else:
+        continueReading = _ReadStrainsTimestep(currentStep, currentTimeStep,
+                                               f, num_elements, strains)
+        if (not continueReading):
+            return None
+
+    # for single strain case reshape strains to only 3d array, will need to be
+    # changed for time rate to be nxnxnxt in this case
+    # Including time for the visco state
+    if (visco):
+        strains = strains[:, :, :, :, 0]
+    else:
+        strains = strains[:, :, :, 0]
+
+    return strains
+
+
+def _ReadStrainsTimestep(currentStep, timestep, f, num_elements,
+                         strains, visco=False):
+    searchStaticOrVisco = ("S T E P       {}     (S T A T I C   A N A L Y" +
+                           "S I S|V I S C O   A N A L Y S I S)" +
+                           "".format(currentStep + 1))
+
+    num_strains = range(0, 1)
+    dim_length = np.ceil(num_elements ** (1/3.0))
+    layer_size = dim_length ** 2
+
+    cur_line = f.readline()
+
+    # find start of element data
+    while(cur_line != "" and "THE FOLLOWING TABLE IS PRINTED FOR ALL ELEMENTS "\
+          "WITH TYPE C3D8 AT THE INTEGRATION POINTS" not in cur_line):
+        cur_line = f.readline()
+        # reach end of file or the next step in the analysis
+        if cur_line == "" or re.search(searchStaticOrVisco, cur_line):
+            return False
+
+    for i in range(0, 5):
+        cur_line = f.readline()
+
+    integration_point_strains = np.zeros((8, np.size(num_strains)))
+    # 1st dim = x, 2nd dim = y, 3rd dim = z
+    for i in range(0, num_elements):
+        y = i % dim_length
+        z = (i % layer_size)/dim_length
+        x = i / layer_size
+        # average strains over the 8 integration points for c3d8
+        for k in range(0, 8):
+            split_str = cur_line.split()
+            for j in num_strains:
+                integration_point_strains[k, j] = float(split_str[2+j])
+            cur_line = f.readline()
+        if (visco):
+            strains[x, y, z, timestep, :] = integration_point_strains.mean(
+                axis=0)
+        else:
+            strains[x, y, z, :] = integration_point_strains.mean(axis=0)
+    return True
