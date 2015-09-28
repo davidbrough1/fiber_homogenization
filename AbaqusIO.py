@@ -163,10 +163,10 @@ def generateAbaqusInp(inputFileName, ms, elastic_modulus=(120, 80),
 
     """
 
-    f = open(inputFileName + ".microstructure", 'w')
+    f = open(inputFileName + ".microstructure", 'wb')
     pickle.dump(ms, f)
     f.close()
-    f = open(inputFileName, 'w')
+    f = open(inputFileName + ".inp", 'wb')
     nl = "\n"
     headerLines = '*Preprint, echo=NO, model=No, history=NO, contact=NO', nl, '*Heading', nl
     headerLines += '****************************************************', nl
