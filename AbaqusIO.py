@@ -163,7 +163,7 @@ def generateAbaqusInp(inputFileName, ms, elastic_modulus=(120, 80),
 
     """
 
-    f = open(inputFileName + ".microstructure", 'wb')
+    f = open(inputFileName + ".plk", 'wb')
     pickle.dump(ms, f)
     f.close()
     f = open(inputFileName + ".inp", 'wb')
