@@ -1,4 +1,4 @@
-from AbaqusGen import generateAbaqusInp
+from AbaqusIO import generateAbaqusInp
 from pymks.datasets import make_microstructure
 
 X = make_microstructure()
